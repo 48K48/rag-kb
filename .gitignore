@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.py[cod]
+.env
+.env.*
+!.env.example
+.pytest_cache/
+.idea/
+data/chroma/
+data/chroma_*/
+chroma_quickstart_db/
+eval/results/
+*.log
+
+# 运行时生成的脚本数据（向量库等）
+scripts/data/
+"data/raw/" 

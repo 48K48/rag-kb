@@ -1,0 +1,13 @@
+{"question": "你好", "history": [], "expected_tools": [], "category": "no_tool", "notes": "问候语应直接回答"}
+{"question": "谢谢，再见", "history": [], "expected_tools": [], "category": "no_tool", "notes": "结束语不需要检索"}
+{"question": "把刚才的答案压缩成一句话", "history": [{"role": "user", "content": "AI Agent 由哪几部分组成？"}, {"role": "assistant", "content": "AI Agent 由模型、工具、记忆和规划四部分组成。[1]"}], "expected_tools": [], "category": "no_tool", "notes": "对历史答案的改写不需要重新检索"}
+{"question": "知识库里有哪些文档？", "history": [], "expected_tools": ["list_knowledge_base_documents"], "category": "list", "notes": "文档列表工具"}
+{"question": "知识库里一共有多少个文本块？", "history": [], "expected_tools": ["knowledge_base_stats"], "category": "stats", "notes": "整体状态工具"}
+{"question": "agent笔记.md 有多少个块？", "history": [], "expected_tools": ["get_document_info"], "expected_source": "agent笔记.md", "category": "doc_info", "notes": "单文档详情工具"}
+{"question": "AI Agent 由哪几部分组成？", "history": [], "expected_tools": ["search_knowledge_base"], "category": "search", "notes": "基础事实检索"}
+{"question": "Chroma 的 metadata 过滤有什么用途？", "history": [], "expected_tools": ["search_knowledge_base"], "category": "search", "notes": "文档事实检索"}
+{"question": "LangGraph 适合什么场景？", "history": [], "expected_tools": ["search_knowledge_base"], "category": "search", "notes": "文档事实检索"}
+{"question": "agent笔记.md 里 Agent 的四大组成是什么？", "history": [], "expected_tools": ["search_knowledge_base"], "expected_source": "agent笔记.md", "category": "search_with_source", "notes": "应把文件名传给 source 参数"}
+{"question": "RAG 和 Agent 的工作流程有什么不同？", "history": [], "expected_tools": ["search_knowledge_base"], "category": "search", "notes": "跨文档综合，可能多次检索"}
+{"question": "先概括一下知识库里关于 MCP 的内容", "history": [], "expected_tools": ["search_knowledge_base"], "allowed_extra_tools": ["list_knowledge_base_documents"], "category": "search", "notes": "先列文档再检索也是合理行为"}
+{"question": "Chroma 查询时用哪个参数控制返回条数？", "history": [], "expected_tools": ["search_knowledge_base"], "category": "search", "notes": "精确关键词题"}

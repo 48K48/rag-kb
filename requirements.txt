@@ -1,0 +1,40 @@
+# ===== Web 框架 =====
+fastapi==0.143.0
+uvicorn==0.54.0
+python-multipart==0.0.32   # FastAPI 接收文件上传（multipart/form-data）所需
+
+# ===== 向量库与 embedding =====
+chromadb==1.5.9
+langchain-ollama==1.1.0
+langchain-text-splitters==1.1.3
+
+# ===== 文档解析 =====
+pypdf==6.21.3
+
+# ===== 大模型客户端（DeepSeek 兼容 OpenAI SDK） =====
+openai==2.54.0
+
+# ===== Agent（LangChain create_agent） =====
+langchain==1.4.7
+langchain-openai==1.7.3
+
+# ===== MCP（FastMCP + LangChain 适配器） =====
+# langchain-mcp-adapters 0.3.2 要求 mcp<2；不要升级到 mcp 2.x / fastmcp 4.x，
+# 否则适配器会报 ImportError（缺少 mcp.server.request_state）。
+mcp==1.30.0
+langchain-mcp-adapters==0.3.2
+
+# ===== Streamlit 前端 =====
+streamlit==1.66.1
+
+# ===== 配置与工具 =====
+python-dotenv==1.2.4
+pydantic==2.13.5
+
+# ===== 测试 =====
+pytest==9.2.0
+httpx==0.28.1
+
+# ===== 混合检索（BM25 + jieba 分词） =====
+rank-bm25==0.2.2
+jieba==0.42.1

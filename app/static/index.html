@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RAG 知识库问答</title>
+
+  <!--
+    单页前端：不引入任何前端框架和构建工具，
+    由 FastAPI 的 StaticFiles 直接托管。
+    这样 Docker 镜像只需要一个进程，部署和演示都简单。
+  -->
+  <style>
+    /* ---------- 设计变量：颜色和背景集中在这里，方便统一改主题 ---------- */
+    :root {
+      --bg: #f6f5f2;          /* 页面底色 */
+      --card: #ffffff;        /* 卡片背景 */
+      --ink: #1f2328;         /* 主文字 */
+      --muted: #6b7280;       /* 次要文字 */
+      --line: #e5e7eb;        /* 边框 */
+      --accent: #2563eb;      /* 强调色（按钮、引用编号） */
+      --accent-soft: #eff6ff; /* 强调色的浅底色 */
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      /* 顶部一层淡蓝色光晕，避免纯色背景太单调 */
+      background: radial-gradient(circle at 20% 0%, #eef2ff 0, transparent 40%), var(--bg);
+      color: var(--ink);
+      font-family: "Segoe UI", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+    }
+
+    /* 内容区最大 860px，居中，手机上自动缩到 92vw */
+    main {
+      width: min(860px, 92vw);
+      margin: 0 auto;
+      padding: 48px 0 80px;
+    }
+
+    h1 { margin: 0 0 8px; font-size: 30px; letter-spacing: -0.02em; }
+    .sub { margin: 0 0 28px; color: var(--muted); font-size: 14px; }
+
+    /* ---------- 提问区域 ---------- */
+    form {
+      display: flex;
+      gap: 12px;
+      background: var(--card);
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
+    }
+
+    textarea {
+      flex: 1;
+      resize: vertical;
+      min-height: 64px;
+      border: 0;
+      outline: 0;
+      font: inherit;
+      line-height: 1.6;
+      padding: 8px;
+      background: transparent;
+    }
+
+    button {
+      align-self: flex-end;
+      border: 0;
+      border-radius: 10px;
+      padding: 10px 20px;
+      background: var(--accent);
+      color: #fff;
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    /* 请求进行中禁用按钮，防止重复提交 */
+    button:disabled { opacity: 0.5; cursor: wait; }
+
+    /* ---------- 状态提示 ---------- */
+    .status { min-height: 22px; margin: 14px 2px; color: var(--muted); font-size: 13px; }
+
+    /* ---------- 答案区域 ---------- */
+    .answer {
+      /* pre-wrap：保留模型输出里的换行，同时允许自动换行 */
+      white-space: pre-wrap;
+      line-height: 1.8;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 22px;
+      min-height: 96px;
+      box-shadow: 0 10px 30px rgba(15, 23, 42, 0.04);
+    }
+
+    /* 内容为空时显示占位提示（纯 CSS，不需要额外 DOM） */
+    .answer:empty::before {
+      content: "回答会显示在这里。";
+      color: #9ca3af;
+    }
+
+    /* ---------- 引用来源区域 ---------- */
+    .sources { margin-top: 22px; }
+    .sources h2 { font-size: 14px; color: var(--muted); margin: 0 0 10px; font-weight: 600; }
+
+    .source {
+      background: var(--card);
+      border: 1px solid var(--line);
+      /* 左侧蓝色竖条，强调这是引用卡片 */
+      border-left: 3px solid var(--accent);
+      border-radius: 10px;
+      padding: 12px 14px;
+      margin-bottom: 10px;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .source .meta { color: var(--accent); font-weight: 600; margin-bottom: 4px; }
+    .source .snippet { color: var(--muted); }
+
+    /* 页码 / 距离的小标签 */
+    .badge {
+      display: inline-block;
+      background: var(--accent-soft);
+      color: var(--accent);
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 12px;
+      margin-left: 6px;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <!-- 页面标题和一句说明 -->
+    <header>
+      <h1>RAG 知识库问答</h1>
+      <p class="sub">基于本地文档 · 回答带引用 · 知识库外问题会拒答</p>
+    </header>
+
+    <!-- 提问表单：回车提交，Shift+回车换行（见下方 JS） -->
+    <form id="form">
+      <textarea id="question" rows="3" placeholder="问点什么，例如：AI Agent 由哪几部分组成？"></textarea>
+      <button id="send" type="submit">提问</button>
+    </form>
+
+    <!-- 状态提示：检索中 / 完成 / 拒答 / 错误 -->
+    <div id="status" class="status"></div>
+
+    <!-- 模型答案：流式 token 会不断追加到这里 -->
+    <section id="answer" class="answer"></section>
+
+    <!-- 引用来源：收到 sources 事件后渲染 -->
+    <section id="sources" class="sources"></section>
+  </main>
+
+  <script>
+    // ---------- 1. 缓存 DOM 节点：避免每次操作都重新查询 ----------
+    const form = document.getElementById("form");
+    const questionInput = document.getElementById("question");
+    const sendButton = document.getElementById("send");
+    const statusEl = document.getElementById("status");
+    const answerEl = document.getElementById("answer");
+    const sourcesEl = document.getElementById("sources");
+
+    /**
+     * 渲染引用来源列表。
+     * @param {Array} sources - 后端返回的 sources 数组，每项包含
+     *   index / source / page / snippet / distance。
+     *
+     * 使用 textContent 而不是 innerHTML：
+     *   文档内容可能包含 <script> 等字符，用 textContent 可以避免 XSS。
+     */
+    function renderSources(sources) {
+      sourcesEl.innerHTML = "";
+      if (!sources || sources.length === 0) return;
+
+      const title = document.createElement("h2");
+      title.textContent = "引用来源";
+      sourcesEl.appendChild(title);
+
+      for (const source of sources) {
+        const card = document.createElement("div");
+        card.className = "source";
+
+        // 第一行：[1] 文件名 + 页码 + 距离
+        const meta = document.createElement("div");
+        meta.className = "meta";
+        meta.textContent = `[${source.index}] ${source.source}`;
+
+        if (source.page) {
+          const page = document.createElement("span");
+          page.className = "badge";
+          page.textContent = `第 ${source.page} 页`;
+          meta.appendChild(page);
+        }
+
+        const distance = document.createElement("span");
+        distance.className = "badge";
+        // distance < 0 是后端约定的标记值：这条结果来自 BM25，
+        // 没有 cosine 距离，不能显示成一个假的相似度。
+        distance.textContent = source.distance < 0
+          ? "BM25 召回"
+          : `距离 ${source.distance}`;
+        meta.appendChild(distance);
+
+        // 第二行：原文片段，方便人工核对答案是否有依据
+        const snippet = document.createElement("div");
+        snippet.className = "snippet";
+        snippet.textContent = source.snippet;
+
+        card.appendChild(meta);
+        card.appendChild(snippet);
+        sourcesEl.appendChild(card);
+      }
+    }
+
+    /**
+     * 发起一次流式问答。
+     * @param {string} question - 用户问题。
+     *
+     * 为什么用 fetch + ReadableStream，而不是 EventSource：
+     *   EventSource 只支持 GET，不能发送 JSON 请求体；
+     *   这里需要 POST /api/chat/stream，所以手动解析 SSE。
+     */
+    async function ask(question) {
+      // 每次提问前清空上一次的结果，避免新旧答案混在一起
+      answerEl.textContent = "";
+      sourcesEl.innerHTML = "";
+      statusEl.textContent = "检索并生成中…";
+      sendButton.disabled = true;
+
+      try {
+        const response = await fetch("/api/chat/stream", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ question, top_k: 5 }),
+        });
+
+        if (!response.ok || !response.body) {
+          statusEl.textContent = `请求失败：HTTP ${response.status}`;
+          return;
+        }
+
+        // reader 按块读取响应体；decoder 把字节流解码成字符串。
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          // stream: true 表示可能还有半个多字节字符，先缓存在 decoder 里。
+          buffer += decoder.decode(value, { stream: true });
+
+          // SSE 事件之间用空行（\n\n）分隔。
+          // 最后一段可能不完整，pop() 出来留到下一轮继续拼接。
+          const blocks = buffer.split("\n\n");
+          buffer = blocks.pop();
+
+          for (const block of blocks) {
+            // 一个事件由若干行组成，这里只关心 event: 和 data: 两类。
+            let eventName = "message";
+            let dataLine = "";
+            for (const line of block.split("\n")) {
+              if (line.startsWith("event: ")) eventName = line.slice(7).trim();
+              if (line.startsWith("data: ")) dataLine += line.slice(6);
+            }
+            if (!dataLine) continue;
+
+            // data 是后端 json.dumps 的 JSON 字符串。
+            const payload = JSON.parse(dataLine);
+
+            if (eventName === "sources") {
+              // 先到的是引用来源，立刻渲染
+              renderSources(payload.sources);
+            } else if (eventName === "token") {
+              // 每个 token 追加到答案区，形成打字机效果
+              answerEl.textContent += payload.text;
+            } else if (eventName === "refused") {
+              // 检索阶段就拒答：没有调用大模型
+              answerEl.textContent = payload.answer;
+              statusEl.textContent = "知识库中没有相关内容，已拒答。";
+            } else if (eventName === "error") {
+              // 流式过程中出错：显示错误信息，不要静默失败
+              statusEl.textContent = payload.message;
+            } else if (eventName === "done") {
+              // 结束事件带 refused 标记：模型自己判断资料不足时也会拒答
+              statusEl.textContent = payload.refused
+                ? "知识库中没有相关内容，已拒答。"
+                : "完成。";
+            }
+          }
+        }
+      } catch (error) {
+        statusEl.textContent = `请求异常：${error}`;
+      } finally {
+        // 无论成功失败都恢复按钮，并把焦点放回输入框，方便连续提问
+        sendButton.disabled = false;
+        questionInput.focus();
+      }
+    }
+
+    // 表单提交：阻止浏览器默认刷新页面
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const question = questionInput.value.trim();
+      if (question) ask(question);
+    });
+
+    // 回车提交，Shift+回车换行（聊天输入框的常见交互）
+    questionInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        form.requestSubmit();
+      }
+    });
+  </script>
+</body>
+</html>

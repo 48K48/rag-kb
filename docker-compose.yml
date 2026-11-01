@@ -1,0 +1,156 @@
+# ============================================================
+# RAG 知识库问答系统 · Docker Compose 部署
+#
+# 四个服务：
+#   rag-kb：FastAPI 应用（构建本项目 Dockerfile）
+#   mcp：FastMCP 服务（复用 rag-kb 镜像，走 Streamable HTTP）
+#   streamlit：Streamlit 前端（复用 rag-kb 镜像，覆盖启动命令）
+#   ollama：本地向量模型服务（qwen3-embedding:0.6b）
+#
+# 启动：
+#   docker compose up -d --build
+#
+# 访问：
+#   http://127.0.0.1:8501  Streamlit 前端
+#   http://127.0.0.1:8000/docs  FastAPI 文档
+#
+# 首次启动后拉取向量模型：
+#   docker compose exec ollama ollama pull qwen3-embedding:0.6b
+#
+# 说明：
+#   - 服务之间用 compose 内部网络通信，rag-kb 通过
+#     http://ollama:11434 访问 Ollama，不需要暴露 11434 端口；
+#   - Streamlit 通过 http://rag-kb:8000 调 FastAPI，不直接访问 Chroma；
+#   - DEEPSEEK_API_KEY 等配置从 .env 读取，不要写进本文件；
+#   - data/chroma、data/raw 挂载到宿主机，容器重建后数据不丢；
+#   - Ollama 模型存在命名卷 ollama_models 里，首次拉取后长期复用。
+# ============================================================
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: rag-kb-ollama
+    restart: unless-stopped
+    volumes:
+      - ollama_models:/root/.ollama
+    healthcheck:
+      # 容器内执行 ollama list 能成功，说明服务已就绪
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  rag-kb:
+    build: .
+    image: rag-kb:latest
+    container_name: rag-kb
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # 覆盖 .env 里的 127.0.0.1，改成 compose 内部服务名
+      OLLAMA_BASE_URL: http://ollama:11434
+      # 容器内固定路径，对应下面的 volume 挂载
+      CHROMA_DIR: /app/data/chroma
+      # 让宿主机环境变量优先于 .env 里的空值；没有值时保持为空。
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      AGENT_API_KEY: ${AGENT_API_KEY:-}
+      # Agent 通过 compose 内网访问 MCP 服务；auto 在 MCP 不可用时回退本地工具。
+      MCP_SERVER_URL: http://mcp:8001/mcp
+      AGENT_TOOL_SOURCE: ${AGENT_TOOL_SOURCE:-auto}
+    ports:
+      - "8000:8000"
+    volumes:
+      # 向量库和原始文档持久化到宿主机，重建容器不丢数据。
+      # 末尾 :Z 是给 SELinux 用的（CentOS/RHEL 默认 Enforcing），
+      # 不加会被拒绝写入；其他系统会自动忽略。
+      - ./data/chroma:/app/data/chroma:Z
+      - ./data/raw:/app/data/raw:Z
+    depends_on:
+      ollama:
+        condition: service_healthy
+    healthcheck:
+      # /api/health 不调用 Ollama，只要能开库就说明 API 已就绪。
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)"
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+  mcp:
+    # 复用 rag-kb 镜像，只覆盖启动命令；MCP 进程不直接打开 Chroma，
+    # 而是通过 KB_API_BASE_URL 调用 rag-kb 的只读接口，保证数据一致。
+    image: rag-kb:latest
+    container_name: rag-kb-mcp
+    restart: unless-stopped
+    # 不加载 .env：MCP 只需要访问 rag-kb 的只读接口，
+    # 不需要也不应该拿到 DEEPSEEK_API_KEY 等密钥。
+    environment:
+      KB_API_BASE_URL: http://rag-kb:8000
+      KB_API_TIMEOUT: "30"
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "8001"
+    command:
+      - python
+      - -m
+      - app.mcp.server
+      - --transport
+      - streamable-http
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8001"
+    depends_on:
+      # MCP 工具调用依赖 FastAPI 的只读接口，所以等 rag-kb 健康后再启动。
+      # 反过来 rag-kb 不依赖 mcp：MCP 短暂不可用时 Agent 可回退本地工具。
+      rag-kb:
+        condition: service_healthy
+    healthcheck:
+      # MCP 端点是 POST + SSE，不适合用简单 GET 探活；这里检查端口是否可连。
+      test:
+        - CMD
+        - python
+        - -c
+        - "import socket; s=socket.create_connection(('127.0.0.1',8001),3); s.close()"
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+
+  streamlit:
+    # 复用 rag-kb 镜像，只覆盖启动命令；避免重复构建。
+    image: rag-kb:latest
+    container_name: rag-kb-ui
+    restart: unless-stopped
+    environment:
+      API_BASE_URL: http://rag-kb:8000
+    ports:
+      - "8501:8501"
+    depends_on:
+      rag-kb:
+        condition: service_healthy
+    command:
+      - streamlit
+      - run
+      - app/frontend/streamlit_app.py
+      - --server.address=0.0.0.0
+      - --server.port=8501
+      - --server.headless=true
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health', timeout=3)"
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+volumes:
+  ollama_models:
